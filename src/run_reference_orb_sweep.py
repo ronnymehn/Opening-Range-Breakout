@@ -1,13 +1,6 @@
-"""Five-year MNQ opening-range breakout backtest -- user-supplied reference
-script, run as-is with two adaptations only:
-  1. fetch_bars() uses this project's already-proven get_bars-based MNQ
-     fetch (orb_vix_runner.fetch_mnq_5m) instead of the untested
-     qpd.Historical().timeseries.get_range(resample=...) call.
-  2. OUT_DIR moved from a root-level "backtests/" folder to data/, per this
-     project's convention of not writing working files to root.
-
-Everything else (simulate/metrics/sizing/target_r sweep logic) is the
-user's script, unchanged.
+"""Five-year MNQ opening-range breakout backtest -- self-contained: fetches
+its own MNQ 5-minute bars (via QuantPad's get_bars, cached locally to
+data/mnq_1m.parquet) and has no dependency on anything outside this folder.
 
 The signal follows a 09:30-10:00 America/New_York opening range. A completed
 five-minute bar closing above the range enters long at the following bar's open.
@@ -16,17 +9,20 @@ when both levels occur in the same bar. Target = entry + target_r * (entry - sto
 -- i.e. target_r is a multiple of the ORB RANGE itself, not VIX em_points.
 """
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import quantpad_data as qpd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))  # main project src/, for orb_vix_runner
-from orb_vix_runner import fetch_mnq_5m  # noqa: E402
 from fomc_dates import FOMC_DATES  # noqa: E402
 
-OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "mnq_orb_reference"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+OUT_DIR = DATA_DIR / "mnq_orb_reference"
+MNQ_PARQUET = DATA_DIR / "mnq_1m.parquet"
+MNQ_SYMBOL = "MNQ.V.0"
 POINT_VALUE = 2.0
 TICK_SIZE = 0.25
 COMMISSION_PER_SIDE = 0.62
@@ -48,6 +44,60 @@ CANONICAL_HEADERS = [
     "Net P&L %", "Run-up USD", "Run-up %", "Drawdown USD",
     "Drawdown %", "Cumulative P&L USD", "Cumulative P&L %",
 ]
+
+
+def _to_ms(date_str: str) -> int:
+    return int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
+def fetch_mnq_5m(start: str, end: str) -> pd.DataFrame:
+    """1-minute MNQ bars via QuantPad's get_bars (cached locally), resampled
+    to 5-minute bars client-side. Cache covers the widest range requested
+    across runs; re-fetches if the request falls outside it."""
+    start_ms, end_ms = _to_ms(start), _to_ms(end)
+
+    bars = None
+    if MNQ_PARQUET.exists():
+        cached = pd.read_parquet(MNQ_PARQUET)
+        cached_start_ms = int(cached["ts"].min().timestamp() * 1000)
+        cached_end_ms = int(cached["ts"].max().timestamp() * 1000)
+        if cached_start_ms <= start_ms and cached_end_ms >= end_ms - 1:
+            bars = cached
+
+    if bars is None:
+        print(f"[mnq] downloading {MNQ_SYMBOL} 1m bars {start}..{end} from QuantPad ...", flush=True)
+        chunks = []
+        years = pd.date_range(start, end, freq="YS").tolist()
+        if not years or years[0] > pd.Timestamp(start):
+            years = [pd.Timestamp(start)] + years
+        boundaries = years + [pd.Timestamp(end)]
+        for i in range(len(boundaries) - 1):
+            s = int(boundaries[i].tz_localize("UTC").timestamp() * 1000)
+            e = int(boundaries[i + 1].tz_localize("UTC").timestamp() * 1000)
+            if e <= start_ms or s >= end_ms:
+                continue
+            s, e = max(s, start_ms), min(e, end_ms)
+            print(f"  fetching {boundaries[i].date()}..{boundaries[i + 1].date()}", flush=True)
+            df = qpd.get_bars(MNQ_SYMBOL, "1m", s, e)
+            df = df.reset_index().rename(columns={"t": "ts"})
+            df = df[["ts", "open", "high", "low", "close", "volume"]]
+            chunks.append(df)
+        bars = pd.concat(chunks, ignore_index=True)
+        if bars["ts"].dt.tz is None:
+            bars["ts"] = bars["ts"].dt.tz_localize("UTC")
+        bars = bars.drop_duplicates(subset="ts").sort_values("ts").reset_index(drop=True)
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        bars.to_parquet(MNQ_PARQUET, index=False)
+        print(f"[mnq] cached {len(bars):,} bars -> {MNQ_PARQUET}", flush=True)
+
+    local = bars.set_index("ts")[["open", "high", "low", "close", "volume"]]
+    local.index = local.index.tz_convert("America/New_York")
+    local = local[(local.index >= pd.Timestamp(start, tz="America/New_York"))
+                  & (local.index < pd.Timestamp(end, tz="America/New_York"))]
+
+    ohlc = local.resample("5min").agg(
+        {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
+    return ohlc.dropna(subset=["open", "high", "low", "close"])
 
 
 def fetch_bars(start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:

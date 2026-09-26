@@ -1,16 +1,16 @@
 """Reference ORB script (target_r sweep) run on NQ (full-size E-mini, not
 MNQ micro), 2020-2026. Same entry/exit logic as run_reference_orb_sweep.py,
-adjusted for NQ's contract specs:
+adjusted for NQ's contract specs. Self-contained: fetches its own NQ 1-minute
+bars (cached locally to data/nq_1m.parquet), no dependency on anything
+outside this folder.
   - POINT_VALUE: $20/pt (vs MNQ's $2/pt)
-  - COMMISSION_PER_SIDE: $2.30 (round-turn $4.60, matching this project's
-    NQ convention in backtest.py) vs MNQ's $0.62
-  - Fixed sizing: 1 NQ contract (this project's established baseline) instead
-    of 5 MNQ micros -- NOT a risk-equivalent comparison, roughly 2x the
-    notional exposure of the "5 micros" MNQ tests (1 NQ ~= 10 micros).
-Fixed-size sweep only (vol-targeting can be added the same way as before if
-useful once this baseline is checked).
+  - COMMISSION_PER_SIDE: $2.30 (round-turn $4.60) vs MNQ's $0.62
+  - Fixed sizing: 1 NQ contract instead of 5 MNQ micros -- NOT a
+    risk-equivalent comparison, roughly 2x the notional exposure of the
+    "5 micros" MNQ tests (1 NQ ~= 10 micros).
 """
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -18,13 +18,10 @@ import pandas as pd
 import quantpad_data as qpd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-MAIN_SRC = Path(__file__).resolve().parent.parent.parent / "src"  # main project src/, for fetch_data
-sys.path.insert(0, str(MAIN_SRC))
-from fetch_data import _to_ms  # noqa: E402
 from fomc_dates import FOMC_DATES  # noqa: E402
 
 OUT_DIR = Path(__file__).resolve().parent.parent / "data" / "orb_reference_nq"
-MAIN_DATA_DIR = MAIN_SRC.parent / "data"  # shared NQ price cache lives in the main project, not here
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 NQ_SYMBOL = "NQ.C.0"
 POINT_VALUE = 20.0
 TICK_SIZE = 0.25
@@ -38,8 +35,12 @@ BACKTEST_END = "2026-12-31"
 TARGET_R_VALUES = (0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0)
 
 
+def _to_ms(date_str: str) -> int:
+    return int(datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+
+
 def fetch_nq_5m(start: str, end: str) -> pd.DataFrame:
-    nq_parquet = MAIN_DATA_DIR / "nq_1m.parquet"  # shared cache with the main project
+    nq_parquet = DATA_DIR / "nq_1m.parquet"
     start_ms, end_ms = _to_ms(start), _to_ms(end)
 
     bars = None
