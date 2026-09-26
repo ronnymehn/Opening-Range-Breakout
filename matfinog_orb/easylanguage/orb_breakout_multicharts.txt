@@ -1,0 +1,89 @@
+{ =====================================================================
+  Opening Range Breakout -- NQ / MNQ, long only
+  - Opening range: first 30 minutes of the NY session (09:30-10:00 ET)
+  - Entry: first 5-min bar closing above the opening range high
+  - Stop: opening range low
+  - Target: TargetR x (entry - stop), 1.0 = a clean 1:1
+  - Time exit: flat by TimeExitHHMM if neither level is hit
+  - One trade per day
+  Apply to a 5-minute NQ or MNQ chart, RTH session starting 09:30 ET.
+===================================================================== }
+
+Inputs:
+    ORStartTime(0930),       // opening range start, HHmm
+    OREndTime(1000),         // opening range end, HHmm (30 min later)
+    TimeExitHHMM(1400),      // flat-by time, HHmm
+    TargetR(1.0),            // target = entry + TargetR * (entry - stop)
+    UseFixedContracts(true), // true = fixed size below; false = equal-$-risk sizing
+    FixedQty(1),
+    RiskPerTradeUSD(2000),   // only used when UseFixedContracts = false
+    PointValue(20),          // $ per point: NQ = 20, MNQ = 2
+    CommissionPerSide(2.30), // round-turn commission / 2, adjust to your broker
+    MyTickSize(0.25);
+
+Vars:
+    ORHigh(0),
+    ORLow(0),
+    ORSet(false),
+    EnteredToday(false),
+    StopPrice(0),
+    TargetPrice(0),
+    TradeQty(0),
+    PerContractRisk(0),
+    NewSession(false);
+
+{ ---- reset state on a new session ---- }
+NewSession = Date <> Date[1];
+if NewSession then begin
+    ORHigh = 0;
+    ORLow = 0;
+    ORSet = false;
+    EnteredToday = false;
+    StopPrice = 0;
+    TargetPrice = 0;
+end;
+
+{ ---- build the opening range ---- }
+if Time >= ORStartTime and Time < OREndTime then begin
+    if ORHigh = 0 then begin
+        ORHigh = High;
+        ORLow = Low;
+    end else begin
+        ORHigh = MaxList(ORHigh, High);
+        ORLow = MinList(ORLow, Low);
+    end;
+end;
+
+if Time >= OREndTime and ORSet = false and ORHigh > 0 then
+    ORSet = true;
+
+{ ---- entry: first close above the opening range high ---- }
+if ORSet and EnteredToday = false and Time >= OREndTime and Time < TimeExitHHMM then begin
+    if Close > ORHigh then begin
+        StopPrice = ORLow;
+        TargetPrice = Close + TargetR * (Close - ORLow);
+
+        if UseFixedContracts then
+            TradeQty = FixedQty
+        else begin
+            PerContractRisk = ((Close - ORLow) + MyTickSize) * PointValue + 2 * CommissionPerSide;
+            if PerContractRisk > 0 then
+                TradeQty = MaxList(0, IntPortion(RiskPerTradeUSD / PerContractRisk))
+            else
+                TradeQty = 0;
+        end;
+
+        if TradeQty > 0 then begin
+            Buy TradeQty Contracts next bar at Market;
+            EnteredToday = true;
+        end;
+    end;
+end;
+
+{ ---- manage the open position ---- }
+if MarketPosition = 1 then begin
+    Sell next bar at StopPrice Stop;
+    Sell next bar at TargetPrice Limit;
+    if Time >= TimeExitHHMM then
+        Sell next bar at Market;
+end;

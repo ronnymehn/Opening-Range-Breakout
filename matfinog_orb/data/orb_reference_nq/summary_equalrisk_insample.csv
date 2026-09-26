@@ -1,0 +1,2 @@
+configuration,trades,net_pnl,win_rate_pct,profit_factor,max_drawdown,sharpe,target_exits,stop_exits,time_exits
+target_1.0r,295.0,48941.000000000015,57.96610169491525,1.3724570092632895,-8297.99999999997,1.172503861272772,82.0,65.0,148.0
