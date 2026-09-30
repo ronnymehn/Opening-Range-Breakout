@@ -207,6 +207,49 @@ def resample_5m(bars_1m: pd.DataFrame) -> pd.DataFrame:
     return ohlc.dropna(subset=["open", "high", "low", "close"])
 
 
+def load_bars_csv(path, label: str = "close", tz: str = ET) -> pd.DataFrame:
+    """1- or 5-minute bars from a CSV (e.g. MultiCharts / TradeStation data
+    export, or a vendor download), returned as left-labelled 5-minute bars in
+    ET. Accepts either one datetime column (Date/Time, Datetime, ts, ...) or
+    separate Date and Time columns, plus Open/High/Low/Close and optional
+    Volume. `label="close"` means each timestamp is the bar's CLOSE time
+    (MultiCharts/TradeStation convention); use "open" for left-labelled data.
+    Naive timestamps are read in `tz`."""
+    raw = pd.read_csv(path)
+    cols = {c.strip().lower().replace(" ", "").replace("<", "").replace(">", ""): c for c in raw.columns}
+
+    def col(*names):
+        return next((cols[n] for n in names if n in cols), None)
+
+    stamp_col = col("date/time", "datetime", "timestamp", "ts", "time_stamp")
+    if stamp_col is not None:
+        stamps = pd.to_datetime(raw[stamp_col])
+    else:
+        date_col, time_col = col("date"), col("time")
+        if date_col is None or time_col is None:
+            raise ValueError(f"no date/time columns in {path}; found {list(raw.columns)}")
+        stamps = pd.to_datetime(raw[date_col].astype(str) + " " + raw[time_col].astype(str))
+    stamps = pd.DatetimeIndex(stamps)
+    stamps = stamps.tz_localize(tz) if stamps.tz is None else stamps.tz_convert(tz)
+    fields = {"open": col("open"), "high": col("high"), "low": col("low"), "close": col("close"),
+              "volume": col("volume", "vol", "totalvolume", "upvol")}
+    missing = [k for k, v in fields.items() if v is None and k != "volume"]
+    if missing:
+        raise ValueError(f"missing {missing} columns in {path}; found {list(raw.columns)}")
+    bars = pd.DataFrame({k: raw[v].to_numpy(float) if v else 0.0 for k, v in fields.items()}, index=stamps)
+    bars = bars[~bars.index.duplicated()].sort_index()
+    step = pd.Series(bars.index).diff().dropna().mode()
+    minutes = int(step.iloc[0].total_seconds() // 60) if not step.empty else BAR_MINUTES
+    if minutes not in (1, BAR_MINUTES):
+        raise ValueError(f"expected 1- or 5-minute bars, got {minutes}-minute spacing")
+    if label == "close":
+        bars.index = bars.index - pd.Timedelta(minutes=minutes)
+    if minutes == 1:
+        bars = bars.resample(f"{BAR_MINUTES}min").agg(
+            {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"})
+    return bars.dropna(subset=["open", "high", "low", "close"])
+
+
 def fetch_5m(spec: InstrumentSpec, start, end, *, fetcher=None, cache_dir: Path = DATA_DIR) -> pd.DataFrame:
     bars = resample_5m(load_1m_bars(spec, start, end, fetcher=fetcher, cache_dir=cache_dir))
     if bars.empty:

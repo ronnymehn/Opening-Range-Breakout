@@ -76,6 +76,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="add always-long 10:05->time-exit and matched no-stop/no-target controls")
     p.add_argument("--trial-counts", default="100", help="extra trial counts N for the Deflated Sharpe")
     p.add_argument("--robust-target", type=float, default=1.0, help="target_r used by the robustness variants")
+    p.add_argument("--bars-csv", default=None,
+                   help="read 1- or 5-minute bars from this CSV (e.g. a MultiCharts data export) instead of QuantPad")
+    p.add_argument("--bars-label", choices=["close", "open"], default="close",
+                   help="whether --bars-csv timestamps mark the bar close (MultiCharts) or open")
     p.add_argument("--out-dir", default=None)
     p.add_argument("--tag", default="")
     p.add_argument("--no-trade-logs", action="store_true")
@@ -163,7 +167,13 @@ def main(argv=None) -> dict:
     out_dir = Path(args.out_dir) if args.out_dir else RESULTS_DIR / f"{spec.name.lower()}_{args.tag or 'run'}"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    bars = eng.fetch_5m(spec, args.start, args.end)
+    if args.bars_csv:
+        bars = eng.load_bars_csv(args.bars_csv, label=args.bars_label)
+        bars = bars[(bars.index >= pd.Timestamp(args.start, tz=eng.ET)) & (bars.index < pd.Timestamp(args.end, tz=eng.ET))]
+        if bars.empty:
+            raise RuntimeError(f"No bars in {args.bars_csv} between {args.start} and {args.end}.")
+    else:
+        bars = eng.fetch_5m(spec, args.start, args.end)
     annual_vol = eng.realized_volatility(bars, base.vol_lookback) if base.sizing in eng.VOL_SIZINGS else None
     atr = eng.daily_atr(bars, base.atr_lookback) if (base.stop_mode == "atr_frac" or base.or_width_atr_range) else None
 

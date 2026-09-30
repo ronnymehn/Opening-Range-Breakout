@@ -86,6 +86,25 @@ Each run writes the trade logs, `summary.csv`, `significance.csv` and a generate
   breakout adds nothing beyond intraday drift.
 - A matched control: the same entries held to the time exit with no stop or target.
 
+## Checking MultiCharts against the backtest, and demo fills
+
+1. In MultiCharts, export the chart's 1-minute (or 5-minute) MNQ bars to CSV. MultiCharts
+   stamps each bar with its close time, and the export should be in Eastern time.
+2. Run the Python backtest on those exact bars. QuantPad isn't needed for this:
+   ```bash
+   python src/run_orb.py --bars-csv mnq_export.csv --start 2026-06-01 --end 2026-10-01 \
+       --targets 1.0 --fixed-qty 1 --tag parity
+   ```
+3. Export the strategy's List of Trades from MultiCharts to CSV (or keep a demo fill log with
+   `entry_time,entry_price,exit_time,exit_price,qty,exit_reason`) and compare:
+   ```bash
+   python src/compare_trades.py --python data/results/mnq_parity/target_1.0r_slip1_trades_detail.csv \
+       --other mc_trades.csv --point-value 2
+   ```
+   Each session is reported as match, mismatch (with the reason), missing or extra. The
+   script also prints the typical timestamp offset between platforms and the slippage in
+   ticks versus the backtest.
+
 **Trials:** every configuration you try is a trial. The report deflates Sharpe for
 the number of configs in the run and for `--trial-counts` (default 100, a rough
 count of the variants tried in this repo so far). Decide on new variants in advance
