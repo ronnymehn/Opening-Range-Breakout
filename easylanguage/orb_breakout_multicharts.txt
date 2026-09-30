@@ -8,9 +8,10 @@
   - Time exit: market order at the TimeExitHHMM bar's open.
 
   CHART SETUP (required for parity with src/orb_engine.py):
-  - 5-minute NQ or MNQ chart with the time zone set to LOCAL = US Eastern.
-    On Exchange time, CME charts are in Central time and 0930 would mean
-    10:30 ET.
+  - 5-minute NQ or MNQ chart whose times are US Eastern. "Local" time in
+    MultiCharts is the PC's time zone, so either set Windows to Eastern and
+    use Local, or shift every time input by the difference (e.g. Central:
+    0830 / 0900 / 1300). On Exchange time, CME charts are in Central time.
   - EasyLanguage stamps each bar with its CLOSE time: the 09:30-09:35 bar
     is Time = 0935 and the opening range is the bars stamped 0935..1000.
     (The Python engine labels bars by their OPEN time; the logic is the same.)
