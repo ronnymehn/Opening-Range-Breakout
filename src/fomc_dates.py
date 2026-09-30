@@ -4,15 +4,20 @@ decision drops mid-session -- our 14:00 ET time-exit sits right at the
 announcement time, so a position could still be open exactly when the
 statement/press conference hits, causing an unrepresentative fill.
 
-Confidence: 2021-2024 are historical (high confidence). 2025 dates were
-published well in advance by the Fed and should be reliable. 2026 dates
-are lower-confidence / may be incomplete -- verify against
-https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm before
-relying on this for anything beyond a backtest.
+2020 also includes the 2020-03-03 unscheduled cut, announced at 10:00 ET
+(inside the opening range). The 2020-03-15 emergency cut was on a Sunday and
+needs no entry.
+
+Source: https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm
+(2025-2026 checked against it). Add future years from the same page.
 """
 import datetime
 
-FOMC_DATES = {
+FOMC_DATES = frozenset({
+    # 2020
+    datetime.date(2020, 1, 29), datetime.date(2020, 3, 3), datetime.date(2020, 4, 29),
+    datetime.date(2020, 6, 10), datetime.date(2020, 7, 29), datetime.date(2020, 9, 16),
+    datetime.date(2020, 11, 5), datetime.date(2020, 12, 16),
     # 2021
     datetime.date(2021, 1, 27), datetime.date(2021, 3, 17), datetime.date(2021, 4, 28),
     datetime.date(2021, 6, 16), datetime.date(2021, 7, 28), datetime.date(2021, 9, 22),
@@ -33,7 +38,18 @@ FOMC_DATES = {
     datetime.date(2025, 1, 29), datetime.date(2025, 3, 19), datetime.date(2025, 5, 7),
     datetime.date(2025, 6, 18), datetime.date(2025, 7, 30), datetime.date(2025, 9, 17),
     datetime.date(2025, 10, 29), datetime.date(2025, 12, 10),
-    # 2026 -- LOWER CONFIDENCE, verify against the Fed's published calendar
+    # 2026
     datetime.date(2026, 1, 28), datetime.date(2026, 3, 18), datetime.date(2026, 4, 29),
     datetime.date(2026, 6, 17), datetime.date(2026, 7, 29), datetime.date(2026, 9, 16),
-}
+    datetime.date(2026, 10, 28), datetime.date(2026, 12, 9),
+})
+
+
+def load_event_dates(path) -> frozenset:
+    """Extra skip dates from a CSV with a `date` column (YYYY-MM-DD), e.g. a
+    user-verified list of 10:00 ET release days. Other columns are ignored."""
+    import csv
+
+    with open(path, newline="", encoding="utf-8") as handle:
+        return frozenset(datetime.date.fromisoformat(row["date"].strip())
+                         for row in csv.DictReader(handle) if row.get("date", "").strip())

@@ -1,0 +1,4 @@
+numpy>=2.0
+pandas>=2.2
+pyarrow>=15
+# quantpad_data: private package, needed only to download bars (not on PyPI)

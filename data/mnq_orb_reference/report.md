@@ -1,5 +1,14 @@
 # MNQ 30-Minute Opening Range Breakout
 
+> **STALE -- kept for history.** These results came from the pre-refactor engine and include known
+> biases: 13-15 holiday/early-close trades per config whose "14:00" exit filled at the 18:00 reopen,
+> early-close trades that were silently dropped (only when the target was missed), and 18 FOMC-day
+> trades (the FOMC filter was added later). The data is most likely an unadjusted continuous series,
+> not back-adjusted as stated below. The ORB-risk, Harvey, Moreira-Muir and 16/24-session variants
+> described below are not in this table. After the corrections, no configuration has a t-stat above
+> 2 and PBO across the target sweep is 0.77 -- see `data/analysis/offline_significance.md`.
+> Re-run with `python src/run_reference_orb_sweep.py` (writes to `data/results/`).
+
 - **Sample**: 2021-01-01 through 2025-01-01 (end exclusive).
 - **Instrument/data**: MNQ volume-rolled continuous futures, 5-minute bars, back-adjusted.
 - **Entry**: First completed 5-minute close above the 09:30-10:00 ET opening-range high; fill at next bar open.

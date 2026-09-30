@@ -1,89 +1,129 @@
 { =====================================================================
   Opening Range Breakout -- NQ / MNQ, long only
   - Opening range: first 30 minutes of the NY session (09:30-10:00 ET)
-  - Entry: first 5-min bar closing above the opening range high
-  - Stop: opening range low
-  - Target: TargetR x (entry - stop), 1.0 = a clean 1:1
-  - Time exit: flat by TimeExitHHMM if neither level is hit
-  - One trade per day
-  Apply to a 5-minute NQ or MNQ chart, RTH session starting 09:30 ET.
+  - Entry: first 5-min bar closing above the opening range high, filled
+    at the next bar's open. One signal per day.
+  - Stop: opening range low. Target: TargetR x (entry - stop); TargetR = 0
+    means no target (stop or time exit only).
+  - Time exit: market order at the TimeExitHHMM bar's open.
+
+  CHART SETUP (required for parity with src/orb_engine.py):
+  - 5-minute NQ or MNQ chart with the time zone set to LOCAL = US Eastern.
+    On Exchange time, CME charts are in Central time and 0930 would mean
+    10:30 ET.
+  - EasyLanguage stamps each bar with its CLOSE time: the 09:30-09:35 bar
+    is Time = 0935 and the opening range is the bars stamped 0935..1000.
+    (The Python engine labels bars by their OPEN time; the logic is the same.)
+  - Backtest with Bar Magnifier on 1-minute data. Without it, MultiCharts
+    resolves a bar that touches both stop and target with its O-H-L-C /
+    O-L-H-C assumption, while the Python backtest always assumes the stop
+    was hit first.
+  - Set commission and slippage in Strategy Properties. CommissionPerSide
+    and SlippageTicks below are only used for equal-risk sizing.
+
+  REMAINING DIFFERENCES FROM THE PYTHON BACKTEST:
+  - Python automatically skips FOMC days and exchange holidays / early
+    closes (sessions without a 14:00 bar). Here, list them in SkipDates in
+    EasyLanguage date format YYYMMDD (1260128 = 2026-01-28), comma
+    separated. On an unlisted half-day the position is carried to the next
+    bar after the halt.
+  - The stop and target on the entry bar are placed with SetStopLoss /
+    SetProfitTarget, measured from the fill, with a distance estimated from
+    the signal-bar close. If the entry gaps, the entry-bar stop can sit a
+    few ticks away from the range low. From the next bar on, the stop is
+    exactly the range low.
+  - The target is measured from EntryPrice (without slippage). Python
+    measures it from the slipped fill.
 ===================================================================== }
 
 Inputs:
-    ORStartTime(0930),       // opening range start, HHmm
-    OREndTime(1000),         // opening range end, HHmm (30 min later)
-    TimeExitHHMM(1400),      // flat-by time, HHmm
-    TargetR(1.0),            // target = entry + TargetR * (entry - stop)
+    ORStartTime(0930),       // opening range start, HHmm (ET)
+    OREndTime(1000),         // opening range end, HHmm (ET)
+    ORBars(6),               // bars expected in the range (30 min / 5 min)
+    TimeExitHHMM(1400),      // flat at this bar's open, HHmm
+    TargetR(1.0),            // target = entry + TargetR * (entry - stop); 0 = no target
     UseFixedContracts(true), // true = fixed size below; false = equal-$-risk sizing
     FixedQty(1),
     RiskPerTradeUSD(2000),   // only used when UseFixedContracts = false
-    PointValue(20),          // $ per point: NQ = 20, MNQ = 2
-    CommissionPerSide(2.30), // round-turn commission / 2, adjust to your broker
-    MyTickSize(0.25);
+    PointValue(20),          // $ per point for sizing: NQ = 20, MNQ = 2
+    CommissionPerSide(2.30), // sizing only; real costs come from Strategy Properties
+    SlippageTicks(1),        // sizing only
+    MyTickSize(0.25),
+    SkipDates("");           // e.g. "1260128,1260318" -- FOMC days, half-days
 
 Vars:
     ORHigh(0),
     ORLow(0),
+    ORCount(0),
     ORSet(false),
     EnteredToday(false),
+    SkipToday(false),
     StopPrice(0),
-    TargetPrice(0),
+    RiskPts(0),
     TradeQty(0),
-    PerContractRisk(0),
-    NewSession(false);
+    PerContractRisk(0);
 
 { ---- reset state on a new session ---- }
-NewSession = Date <> Date[1];
-if NewSession then begin
+if Date <> Date[1] then begin
     ORHigh = 0;
     ORLow = 0;
+    ORCount = 0;
     ORSet = false;
     EnteredToday = false;
     StopPrice = 0;
-    TargetPrice = 0;
+    RiskPts = 0;
+    SkipToday = SkipDates <> "" and InStr(SkipDates, NumToStr(Date, 0)) > 0;
 end;
 
-{ ---- build the opening range ---- }
-if Time >= ORStartTime and Time < OREndTime then begin
-    if ORHigh = 0 then begin
+{ ---- build the opening range: bars stamped 0935..1000 = 09:30-10:00 ---- }
+if Time > ORStartTime and Time <= OREndTime then begin
+    if ORCount = 0 then begin
         ORHigh = High;
         ORLow = Low;
     end else begin
         ORHigh = MaxList(ORHigh, High);
         ORLow = MinList(ORLow, Low);
     end;
+    ORCount = ORCount + 1;
 end;
 
-if Time >= OREndTime and ORSet = false and ORHigh > 0 then
+if Time >= OREndTime and ORSet = false and ORCount = ORBars then
     ORSet = true;
 
-{ ---- entry: first close above the opening range high ---- }
-if ORSet and EnteredToday = false and Time >= OREndTime and Time < TimeExitHHMM then begin
-    if Close > ORHigh then begin
-        StopPrice = ORLow;
-        TargetPrice = Close + TargetR * (Close - ORLow);
+{ ---- entry: first close above the opening range high, from the 10:00-10:05 bar on ---- }
+if ORSet and EnteredToday = false and SkipToday = false and MarketPosition = 0
+    and Time > OREndTime and Time < TimeExitHHMM and Close > ORHigh then begin
+    EnteredToday = true;  // only the first trigger of the day counts, even if not taken
+    StopPrice = ORLow;
+    RiskPts = Close + SlippageTicks * MyTickSize - StopPrice;  // expected fill minus stop
 
-        if UseFixedContracts then
-            TradeQty = FixedQty
-        else begin
-            PerContractRisk = ((Close - ORLow) + MyTickSize) * PointValue + 2 * CommissionPerSide;
-            if PerContractRisk > 0 then
-                TradeQty = MaxList(0, IntPortion(RiskPerTradeUSD / PerContractRisk))
-            else
-                TradeQty = 0;
-        end;
-
-        if TradeQty > 0 then begin
-            Buy TradeQty Contracts next bar at Market;
-            EnteredToday = true;
-        end;
+    if UseFixedContracts then
+        TradeQty = FixedQty
+    else begin
+        PerContractRisk = (RiskPts + SlippageTicks * MyTickSize) * PointValue + 2 * CommissionPerSide;
+        if PerContractRisk > 0 then
+            TradeQty = MaxList(0, IntPortion(RiskPerTradeUSD / PerContractRisk))
+        else
+            TradeQty = 0;
     end;
+
+    if TradeQty > 0 and RiskPts > 0 then
+        Buy ("ORB LE") TradeQty Contracts next bar at Market
+    else
+        RiskPts = 0;
 end;
 
-{ ---- manage the open position ---- }
-if MarketPosition = 1 then begin
-    Sell next bar at StopPrice Stop;
-    Sell next bar at TargetPrice Limit;
-    if Time >= TimeExitHHMM then
-        Sell next bar at Market;
+{ ---- stop and target: active from the entry bar on ---- }
+if MarketPosition = 1 then
+    RiskPts = EntryPrice - StopPrice;
+
+if RiskPts > 0 then begin
+    SetStopContract;
+    SetStopLoss(RiskPts * BigPointValue);
+    if TargetR > 0 then
+        SetProfitTarget(TargetR * RiskPts * BigPointValue);
 end;
+
+{ ---- time exit at the TimeExitHHMM bar's open (bar stamped 1400 = 13:55-14:00) ---- }
+if MarketPosition = 1 and (Time >= TimeExitHHMM or Date <> EntryDate) then
+    Sell ("ORB time") next bar at Market;
